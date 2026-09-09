@@ -27,7 +27,7 @@ export interface PaginatedProducts {
 }
 
 export async function getProducts(query: ProductQueryInput): Promise<PaginatedProducts> {
-  const { page, limit, category, search, sortBy, sortOrder, minPrice, maxPrice } = query;
+  const { page, limit, category, search, inStock, sortBy, sortOrder, minPrice, maxPrice } = query;
 
   const filter: Record<string, any> = {};
 
@@ -37,6 +37,10 @@ export async function getProducts(query: ProductQueryInput): Promise<PaginatedPr
 
   if (search) {
     filter.name = { $regex: search, $options: "i" };
+  }
+
+  if (inStock !== undefined) {
+    filter.stockQuantity = inStock ? { $gt: 0 } : { $eq: 0 };
   }
 
   if (minPrice !== undefined || maxPrice !== undefined) {

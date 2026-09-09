@@ -62,6 +62,10 @@ export const productQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(100).default(10),
   category: z.string().trim().optional(),
   search: z.string().trim().optional(),
+  inStock: z
+    .enum(["true", "false"])
+    .transform((val) => val === "true")
+    .optional(),
   sortBy: z.enum(["name", "price", "createdAt", "stockQuantity"]).default("createdAt"),
   sortOrder: z.enum(["asc", "desc"]).default("desc"),
   minPrice: z.coerce.number().nonnegative().optional(),
