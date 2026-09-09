@@ -7,6 +7,9 @@ import { connectMongoDB, disconnectMongoDB } from "./config/database.js";
 import { connectRedis, disconnectRedis } from "./config/redis.config.js";
 import logger from "./utils/logger.js";
 
+// Initialize BullMQ worker
+import { orderWorker } from "./modules/order/order.worker.js";
+
 const server = http.createServer(app);
 
 // ─── Graceful Shutdown ───────────────────────────────────────────────────────
@@ -20,6 +23,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   server.close(async () => {
     try {
+      await orderWorker.close(); // gracefully close the BullMQ worker
       await disconnectMongoDB();
       await disconnectRedis();
       logger.info("✅ Graceful shutdown complete");

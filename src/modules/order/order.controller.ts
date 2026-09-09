@@ -41,9 +41,9 @@ export async function create(
 
     logger.info({ orderId: order._id, userId }, "Order created");
 
-    res.status(201).json({
+    res.status(202).json({
       success: true,
-      message: "Order created successfully",
+      message: "Order accepted and is processing",
       data: order,
     });
   } catch (err) {

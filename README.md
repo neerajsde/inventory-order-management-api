@@ -6,7 +6,7 @@ A robust, production-ready backend REST API for managing users, products, and or
 
 - **Authentication:** JWT-based auth with separate Access and Refresh tokens.
 - **Product Management:** Full CRUD operations with advanced querying (pagination, category/availability filtering, text search, price ranges, and sorting).
-- **Order Management:** Secure order creation with atomic stock reduction, rollback safety, and user-isolated order histories.
+- **Order Management:** Background job processing via **BullMQ** for secure, non-blocking order creation. Includes atomic stock reduction, rollback safety, and user-isolated order histories.
 - **Validation:** Type-safe runtime schema validation using Zod.
 - **Security:** Helmet headers, CORS, Rate Limiting, and robust error handling.
 - **Logging:** Structured JSON logging using Pino.
@@ -18,7 +18,7 @@ A robust, production-ready backend REST API for managing users, products, and or
 Ensure you have the following installed on your system:
 - **Node.js** (v18 or higher)
 - **MongoDB** (Local standalone/replica set or MongoDB Atlas)
-- **Redis** (Required for rate limiting/caching layers)
+- **Redis** (Required for rate limiting, caching, and BullMQ)
 
 ---
 
@@ -75,7 +75,7 @@ src/
 ├── models/         # Mongoose schemas & interfaces (User, Product, Order)
 ├── modules/        # Feature-based business logic and routing
 │   ├── auth/       # Register, login, refresh token logic
-│   ├── order/      # Order creation, listing, stock management
+│   ├── order/      # BullMQ queue/worker logic, listing, stock management
 │   └── product/    # Product CRUD, search, filtering
 ├── routes/         # Main API router aggregating module routes
 ├── utils/          # Utilities (ApiError, logger, etc.)
@@ -110,8 +110,8 @@ Base URL: `/api/v1`
 
 ### Orders (`/orders`)
 *Requires `Bearer <accessToken>`*
-- `POST /orders` - Create a new order. Request body takes an array of `items` (productId, quantity). Safely validates and reduces product stock.
-- `GET /orders` - List all orders belonging to the authenticated user. Supports pagination and `status` filtering.
+- `POST /orders` - Create a new order. Request body takes an array of `items` (productId, quantity). Safely validates product existence and pushes a background job to **BullMQ** for atomic stock reduction. Returns `202 Accepted` with a `pending` status immediately.
+- `GET /orders` - List all orders belonging to the authenticated user. Supports pagination and `status` filtering (to check if `pending` orders became `confirmed` or `cancelled`).
 - `GET /orders/:id` - Get a specific order (if owned by the user).
 
 ---
@@ -132,15 +132,18 @@ A pre-configured Postman collection is included in the repository to easily test
 **Question:** *Imagine two users try to buy the last available item at the same time. How would you make sure the stock does not become negative or both orders get confirmed?*
 
 **Answer:** 
-To prevent stock from going negative during concurrent requests, I used **Atomic Updates with Optimistic Concurrency** directly in the database query. Instead of reading the stock, doing math in Node.js, and saving it (which causes race conditions), the update query uses a condition:
+To prevent stock from going negative during concurrent requests while keeping the API highly responsive, I implemented a combination of **Background Job Queues (BullMQ)** and **Atomic Updates with Optimistic Concurrency** directly in the database.
+
+1. **Queueing (BullMQ):** When an order request is received, the API quickly validates the request, creates an order in a `pending` state, and pushes a job to a Redis-backed BullMQ queue. The API immediately responds with `202 Accepted`.
+2. **Atomic Updates:** A background worker processes jobs off the queue. Instead of reading the stock, doing math in Node.js, and saving it (which causes race conditions), the worker executes an atomic update query with a constraint condition:
 ```javascript
 Product.updateOne(
   { _id: productId, stockQuantity: { $gte: requestedQuantity } },
   { $inc: { stockQuantity: -requestedQuantity } }
 )
 ```
-Because MongoDB operations are atomic at the document level, if two users try to buy the last item at the exact same millisecond, only the first query will match the `$gte` (greater than or equal to) condition. The second query will fail to match, return a `modifiedCount` of 0, and the API will safely return a `409 Conflict` (or `400 Bad Request`) telling the second user the item is out of stock. (Note: in a Replica Set environment, MongoDB Transactions would also be utilized to wrap this safely across multiple documents).
+Because MongoDB operations are atomic at the document level, if two workers process orders for the exact same last item simultaneously, only the first query will match the `$gte` (greater than or equal to) condition. The second query will fail to match and return a `modifiedCount` of 0. The worker catches this failure, safely rolls back any other stock decrements in the order, and updates the order status to `cancelled` due to insufficient stock. The successful worker updates its order status to `confirmed`.
 
 ### 2. AI Usage
 - **AI Tools Used:** Google Antigravity (Gemini 3.1 Pro)
-- **What they were used for:** The AI assistant was used as a pair-programmer to rapidly scaffold the initial Express/TypeScript boilerplate, generate the Zod validation schemas, implement the atomic stock reduction logic, and quickly build out the Postman collection JSON.
+- **What they were used for:** The AI assistant was used as a pair-programmer to rapidly scaffold the initial Express/TypeScript boilerplate, generate the Zod validation schemas, build out the Postman collection JSON, and refactor the order logic into an asynchronous background job processing architecture using BullMQ and Redis.
