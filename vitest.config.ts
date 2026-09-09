@@ -6,5 +6,6 @@ export default defineConfig({
     environment: "node",
     setupFiles: ["./src/tests/setup.ts"],
     fileParallelism: false, // Prevent concurrency issues with DB
+    exclude: ["node_modules", "dist", ".idea", ".git", ".cache"],
   },
 });
