@@ -4,8 +4,9 @@ import { Order, IOrder, IOrderItem } from "../../models/order.model.js";
 import { ApiError } from "../../utils/api-error.js";
 import logger from "../../utils/logger.js";
 import type { CreateOrderInput, OrderQueryInput } from "./order.validation.js";
+import { addOrderToQueue } from "./order.queue.js";
 
-// ─── Create Order ────────────────────────────────────────────────────────────
+// ─── Initiate Order (Queues Background Job) ──────────────────────────────────
 export async function createOrder(
   userId: string,
   data: CreateOrderInput
@@ -34,7 +35,7 @@ export async function createOrder(
   // 4. Build a map for quick lookup
   const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
-  // 5. Validate stock and build order items
+  // 5. Build order items (Validate stock loosely for fast fail)
   const orderItems: IOrderItem[] = [];
   let totalAmount = 0;
 
@@ -60,59 +61,56 @@ export async function createOrder(
     totalAmount += subtotal;
   }
 
-  totalAmount = +totalAmount.toFixed(2);
+  // 6. Create the pending order synchronously
+  const order = await Order.create({
+    user: userId,
+    items: orderItems,
+    totalAmount: +totalAmount.toFixed(2),
+    status: "pending",
+  });
 
-  // 6. Reduce stock atomically using optimistic concurrency
-  //    Each update uses { stockQuantity: { $gte: quantity } } as a guard
-  //    so stock can never go negative, even without transactions.
-  for (const item of data.items) {
-    const result = await Product.updateOne(
-      {
-        _id: item.productId,
-        stockQuantity: { $gte: item.quantity },
-      },
-      { $inc: { stockQuantity: -item.quantity } }
-    );
+  // 7. Hand off atomic stock deduction to BullMQ
+  await addOrderToQueue(order._id.toString(), userId, data.items);
 
-    if (result.modifiedCount === 0) {
-      // Rollback previously decremented items
-      const currentIndex = data.items.indexOf(item);
-      for (let i = 0; i < currentIndex; i++) {
-        const prev = data.items[i];
-        await Product.updateOne(
-          { _id: prev.productId },
-          { $inc: { stockQuantity: prev.quantity } }
-        );
-      }
+  return order;
+}
 
-      const product = productMap.get(item.productId)!;
-      throw new ApiError(
-        409,
-        `Stock changed for "${product.name}" during order processing. Please retry.`,
-        "STOCK_CONFLICT"
-      );
-    }
-  }
-
-  // 7. Create the order
+// ─── Background Worker Logic (BullMQ handles this) ───────────────────────────
+export async function processOrderTransaction(
+  orderId: string,
+  items: { productId: string; quantity: number }[]
+): Promise<void> {
   try {
-    const order = await Order.create({
-      user: userId,
-      items: orderItems,
-      totalAmount,
-      status: "pending",
-    });
-
-    return order;
-  } catch (error) {
-    // Rollback stock if order creation fails
-    logger.error({ error }, "Order creation failed, rolling back stock");
-    for (const item of data.items) {
-      await Product.updateOne(
-        { _id: item.productId },
-        { $inc: { stockQuantity: item.quantity } }
+    // Reduce stock atomically using optimistic concurrency
+    for (const item of items) {
+      const result = await Product.updateOne(
+        {
+          _id: item.productId,
+          stockQuantity: { $gte: item.quantity },
+        },
+        { $inc: { stockQuantity: -item.quantity } }
       );
+
+      if (result.modifiedCount === 0) {
+        // Rollback previously decremented items
+        const currentIndex = items.indexOf(item);
+        for (let i = 0; i < currentIndex; i++) {
+          const prev = items[i];
+          await Product.updateOne(
+            { _id: prev.productId },
+            { $inc: { stockQuantity: prev.quantity } }
+          );
+        }
+        throw new Error(`Stock conflict: insufficient stock for product ${item.productId}`);
+      }
     }
+
+    // Mark order as confirmed if all stock reductions succeeded
+    await Order.updateOne({ _id: orderId }, { status: "confirmed" });
+  } catch (error) {
+    // If stock deduction fails, or any other error happens, cancel the order
+    logger.error({ error, orderId }, "Background order processing failed. Cancelling order.");
+    await Order.updateOne({ _id: orderId }, { status: "cancelled" });
     throw error;
   }
 }
