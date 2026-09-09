@@ -52,4 +52,4 @@ const ProductSchema: Schema = new Schema(
 // Compound index for category + price queries (e.g. filtering by category sorted by price)
 ProductSchema.index({ category: 1, price: 1 });
 
-export const Product = mongoose.model<IProduct>("Product", ProductSchema);
+export const Product = mongoose.models.Product || mongoose.model<IProduct>("Product", ProductSchema);

@@ -9,6 +9,7 @@ A robust, production-ready backend REST API for managing users, products, and or
 - **Order Management:** Background job processing via **BullMQ** for secure, non-blocking order creation. Includes atomic stock reduction, rollback safety, and user-isolated order histories.
 - **Validation:** Type-safe runtime schema validation using Zod.
 - **Security:** Helmet headers, CORS, Rate Limiting, and robust error handling.
+- **Testing:** Comprehensive automated integration testing using **Vitest** and **Supertest** with isolated in-memory DB setups.
 - **Logging:** Structured JSON logging using Pino.
 
 ---
@@ -62,6 +63,13 @@ npm run build
 npm start
 ```
 
+**5. Running Tests**
+The project includes automated integration tests using Vitest and Supertest.
+```bash
+npm test
+```
+*(Note: Ensure MongoDB and Redis are running locally before testing. Tests will use a separate `inventory-management-test` database so your dev data remains untouched).*
+
 ---
 
 ## Project Structure
@@ -78,6 +86,7 @@ src/
 │   ├── order/      # BullMQ queue/worker logic, listing, stock management
 │   └── product/    # Product CRUD, search, filtering
 ├── routes/         # Main API router aggregating module routes
+├── tests/          # Automated integration tests (Vitest + Supertest)
 ├── utils/          # Utilities (ApiError, logger, etc.)
 ├── app.ts          # Express app configuration
 └── server.ts       # HTTP Server entry point
@@ -146,4 +155,4 @@ Because MongoDB operations are atomic at the document level, if two workers proc
 
 ### 2. AI Usage
 - **AI Tools Used:** Google Antigravity (Gemini 3.1 Pro)
-- **What they were used for:** The AI assistant was used as a pair-programmer to rapidly scaffold the initial Express/TypeScript boilerplate, generate the Zod validation schemas, build out the Postman collection JSON, and refactor the order logic into an asynchronous background job processing architecture using BullMQ and Redis.
+- **What they were used for:** The AI assistant was used as a pair-programmer to rapidly scaffold the initial Express/TypeScript boilerplate, generate the Zod validation schemas, build out the Postman collection JSON, refactor the order logic into an asynchronous background job architecture (BullMQ), and implement the automated testing suite (Vitest/Supertest).
