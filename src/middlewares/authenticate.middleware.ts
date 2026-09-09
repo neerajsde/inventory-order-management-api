@@ -1,12 +1,14 @@
 import type { Request, Response, NextFunction } from "express";
-import { verifyJWT } from "../modules/auth/auth.service.js";
+import jwt from "jsonwebtoken";
+import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/api-error.js";
+import { ENV } from "../config/env.js";
 
 // ─── Augment Express Request ───────────────────────────────────────────────
 declare global {
   namespace Express {
     interface Request {
-      user?: IUserPublic;
+      user?: any;
     }
   }
 }
@@ -19,7 +21,7 @@ export async function authenticate(
   try {
     // 1. Extract token from signed cookie or Authorization header
     let token: string | undefined =
-      req.signedCookies["auth_token"] as string | undefined;
+      req.signedCookies && req.signedCookies["auth_token"];
 
     if (!token) {
       const authHeader = req.headers.authorization;
@@ -33,25 +35,27 @@ export async function authenticate(
     }
 
     // 2. Verify JWT
-    let payload: { sub: string };
+    let payload: any;
     try {
-      payload = verifyJWT(token);
+      payload = jwt.verify(token, ENV.JWT_SECRET);
     } catch {
       throw new ApiError(401, "Invalid or expired token", "TOKEN_INVALID");
     }
 
     // 3. Load user
-    const user = await UserModel.findById(payload.sub);
+    const userId = payload.sub || payload.userId;
+    const user = await User.findById(userId);
     if (!user) {
       throw new ApiError(401, "User not found", "USER_NOT_FOUND");
     }
 
-    if (user.status === "suspended") {
-      throw new ApiError(403, "Account suspended", "ACCOUNT_SUSPENDED");
-    }
-
     // 4. Attach to request
-    req.user = user.toPublic();
+    req.user = {
+      id: user._id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    };
 
     next();
   } catch (err) {
