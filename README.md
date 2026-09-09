@@ -123,3 +123,24 @@ A pre-configured Postman collection is included in the repository to easily test
 1. Open Postman and click **Import**.
 2. Select the `postman_collection.json` file located in the root of this project.
 3. The collection has scripts that **automatically capture and set** the `accessToken` and `refreshToken` when you use the Login API. Simply run the Login request, and you can immediately use the Product and Order APIs without manually copying tokens!
+
+---
+
+## Technical Task Questions
+
+### 1. Handling Concurrency (Two users buying the last item)
+**Question:** *Imagine two users try to buy the last available item at the same time. How would you make sure the stock does not become negative or both orders get confirmed?*
+
+**Answer:** 
+To prevent stock from going negative during concurrent requests, I used **Atomic Updates with Optimistic Concurrency** directly in the database query. Instead of reading the stock, doing math in Node.js, and saving it (which causes race conditions), the update query uses a condition:
+```javascript
+Product.updateOne(
+  { _id: productId, stockQuantity: { $gte: requestedQuantity } },
+  { $inc: { stockQuantity: -requestedQuantity } }
+)
+```
+Because MongoDB operations are atomic at the document level, if two users try to buy the last item at the exact same millisecond, only the first query will match the `$gte` (greater than or equal to) condition. The second query will fail to match, return a `modifiedCount` of 0, and the API will safely return a `409 Conflict` (or `400 Bad Request`) telling the second user the item is out of stock. (Note: in a Replica Set environment, MongoDB Transactions would also be utilized to wrap this safely across multiple documents).
+
+### 2. AI Usage
+- **AI Tools Used:** Google Antigravity (Gemini 3.1 Pro)
+- **What they were used for:** The AI assistant was used as a pair-programmer to rapidly scaffold the initial Express/TypeScript boilerplate, generate the Zod validation schemas, implement the atomic stock reduction logic, and quickly build out the Postman collection JSON.
